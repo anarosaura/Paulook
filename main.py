@@ -1,59 +1,72 @@
 import uvicorn
-from fastapi import FastAPI
-from pydantic import BaseModel
 from datetime import datetime
 from typing import Union, List
-import time
-
+from fastapi import FastAPI, HTTPException, Depends
+from pydantic import BaseModel, Field
+import models
+from database import engine, SessionLocal
+from sqlalchemy.orm import Session
 
 app = FastAPI()
 
 
+models.Base.metadata.create_all(bind=engine)  # crea las tablas que definimos en el archivo models.py
+
+
+def get_db():
+    try:
+        db = SessionLocal()
+        yield db
+    finally:
+        db.close()  # cada vez que se usa un enponit se hace la conexion con la db y luego la cierra
+
+
 class Posts(BaseModel):
-    n_likes: int
-    description: str
-    user_id: int
+    n_likes: int = Field(gt=0)
+    description: str = Field(min_length=1, max_length=1800)
+    user_id: int = Field(gt=-1)
     creation_date: Union[datetime, None] = None
-    post_id: int
-    title_post: str
+    title_post: str = Field(min_length=1, max_length=100)
 
 
 class Users(BaseModel):
-    user_name: str
-    user_id: int
-    user_age: int
-    user_rol: str
-    rol_id: int
-    career: Union[str, None] = None
-    semester: Union[str, None] = None
-    friends_list: List[int]
-
-
-posts_dict = {}
-users_dict = {}
+    user_name: str = Field(min_length=1, max_length=100)
+    user_age: int = Field(gt=17, lt=120)
+    rol_id: int = Field(gt=-1)
+    career: Union[str, None] = Field(min_length=1, max_length=100)
+    semester:  int = Field(gt=0, lt=15)
+    friends_list: str = Field(min_length=1, max_length=100)
 
 
 @app.put('/posts')
-def create_post(post: Posts):
-    post = post.dict()
-    posts_dict[post['post_id']] = post
+def create_post(post: Posts, db: Session = Depends(get_db)):
+    post_model = models.Post()
+    post_model.title_post = post.title_post
+    post_model.n_likes = post.n_likes
+    post_model.description = post.description
+    post_model.user_id = post.user_id
+    post_model.creation_date = post.creation_date
 
-    return {'Message': f'Post {post["post_id"]} fue creado correctamente'}
+    db.add(post_model)  # agrega la info que acabamos de agregar
+    db.commit()
 
-#{
-#    n_likes: 500
-#    description: 'DS'
-#    user_id: 1
-#    post_id: 1
-#    title_post: 'title'
-#}
+    return {"Description": "Post creado satisfactoriamente."}
 
 
 @app.put('/user')
-def create_user(user: Users):
-    user = user.dict()
-    users_dict[user['user_id']]= user
-    return {'description':f'User {user["user_id"]} con rol {user["user_rol"]} fue agregado correctamente.'}
+def create_user(user: Users, db: Session = Depends(get_db)):
+    users_model = models.Users()
+    users_model.user_name = user.user_name
+    users_model.user_age = user.user_age
+    users_model.rol_id = user.rol_id
+    users_model.career = user.career
+    users_model.semester = user.semester
+    users_model.friends_list = user.friends_list
+
+    db.add(users_model)  # agrega la info que acabamos de agregar
+    db.commit()
+
+    return {'Description': f'Usuario agregado correctamente.'}
 
 #{
 #    "user_name": "Ana",
@@ -67,20 +80,38 @@ def create_user(user: Users):
 
 
 @app.post('/users/{user_id}/{friend_id}')
-def update_user(user_id: int, friend_id: int):
-    user_to_update = users_dict[user_id]
-    list_to_update = user_to_update["friends_list"]
-    user_to_update.append(friend_id)
-    users_dict[user_id]['friends_list'] = list_to_update
-    return {'Description': f"Usuario {friend_id}agregado a la lista de amigos de {user_id}"}
+def update_user(user_id: int, user: Users, db: Session = Depends(get_db)):
+    user_model = db.query(models.User).filter(models.User.id == user_id).first()
+
+    if user_model is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"ID {user_id} : Does not exist"
+        )
+
+    user_model.user_name = user.user_name
+    user_model.user_age = user.user_age
+    user_model.rol_id = user.rol_id
+    user_model.career = user.career
+    user_model.semester = user.semester
+    user_model.friends_list = user.friends_list
+
+    db.add(user_model)  # agrega la info que acabamos de agregar
+    db.commit()
+    return {'Description': f"Usuario {user_id} modificado correctamente."}
 
 
-@app.get('/users/{user_id}/{friends}')
-def get_friends_list(user_id: int):
-    friends_lst = users_dict[user_id]["friends_list"]
+@app.get('/users/{user_id}}')
+def get_user(user_id: int, db: Session = Depends(get_db)):
+    user_model = db.query(models.User).filter(models.User.id == user_id).first()
 
-    return {"User ID": user_id,
-            "Friends List": friends_lst}
+    if user_model is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"ID {user_id} : Does not exist"
+        )
+
+    return user_model
 
 
 if __name__ == "__main__":
